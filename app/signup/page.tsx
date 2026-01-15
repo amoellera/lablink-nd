@@ -74,8 +74,13 @@ export default function SignUp() {
 
       // Redirect to onboarding page
       router.push("/onboarding");
-    } catch (err) {
-      setError("Something went wrong. Please try again.");
+    } catch (err: any) {
+      const errorMessage = err?.message || err?.toString() || "Something went wrong. Please try again.";
+      if (errorMessage.includes('fetch') || errorMessage.includes('network')) {
+        setError("Network error: Unable to connect to Supabase. Please check your internet connection and ensure Supabase is properly configured.");
+      } else {
+        setError(errorMessage);
+      }
       setIsSubmitting(false);
     }
   };
