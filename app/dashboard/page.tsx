@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useUser } from "@/lib/useUser";
 
 // Mock data for postings - in production, this would come from Supabase
 const mockPostings = [
@@ -13,6 +14,12 @@ const mockPostings = [
     description: "Join our team working on cutting-edge ML algorithms for healthcare applications.",
     spotsTotal: 2,
     spotsFilled: 1,
+    deadline: new Date("2026-02-15"), // 30 days from now (assuming today is around Jan 16)
+    applicationQuestions: [
+      "Why are you interested in machine learning research?",
+      "Describe any previous experience with Python or machine learning frameworks.",
+      "What are your research goals for this position?",
+    ],
   },
   {
     id: 2,
@@ -22,6 +29,11 @@ const mockPostings = [
     description: "Research opportunity studying genetic markers in plant development.",
     spotsTotal: 3,
     spotsFilled: 2,
+    deadline: new Date("2026-03-01"), // 45 days from now
+    applicationQuestions: [
+      "What draws you to genetics research?",
+      "Have you completed any biology laboratory courses?",
+    ],
   },
   {
     id: 3,
@@ -31,6 +43,11 @@ const mockPostings = [
     description: "Assist with organic synthesis experiments and data analysis.",
     spotsTotal: 1,
     spotsFilled: 0,
+    deadline: new Date("2026-01-25"), // 10 days from now
+    applicationQuestions: [
+      "Which organic chemistry courses have you completed?",
+      "Describe your interest in synthetic chemistry.",
+    ],
   },
   {
     id: 4,
@@ -40,22 +57,180 @@ const mockPostings = [
     description: "Explore quantum algorithms and their applications in computing.",
     spotsTotal: 2,
     spotsFilled: 1,
+    deadline: new Date("2026-02-28"), // 43 days from now
+    applicationQuestions: [
+      "Have you studied quantum mechanics? If so, which courses?",
+      "What interests you about quantum computing?",
+      "Describe your mathematical background.",
+    ],
   },
 ];
 
 export default function Dashboard() {
+  const { userProfile } = useUser();
   const [appliedPostings, setAppliedPostings] = useState<number[]>([]);
+  const [starredPostings, setStarredPostings] = useState<number[]>([]);
+  const [applicationData, setApplicationData] = useState<Record<number, { appliedDate: Date }>>({});
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedDepartment, setSelectedDepartment] = useState<string>("all");
   const [availabilityFilter, setAvailabilityFilter] = useState<string>("all");
+  const [showApplicationModal, setShowApplicationModal] = useState(false);
+  const [selectedPostingForApplication, setSelectedPostingForApplication] = useState<typeof mockPostings[0] | null>(null);
+  const [resumeFile, setResumeFile] = useState<File | null>(null);
+  const [questionAnswers, setQuestionAnswers] = useState<Record<string, string>>({});
+
+  // Load from localStorage on mount
+  useEffect(() => {
+    const storedApplied = localStorage.getItem("appliedPostings");
+    const storedStarred = localStorage.getItem("starredPostings");
+    const storedApplications = localStorage.getItem("applications");
+
+    if (storedApplied) {
+      try {
+        setAppliedPostings(JSON.parse(storedApplied));
+      } catch (e) {
+        console.error("Error parsing applied postings:", e);
+      }
+    }
+
+    if (storedStarred) {
+      try {
+        setStarredPostings(JSON.parse(storedStarred));
+      } catch (e) {
+        console.error("Error parsing starred postings:", e);
+      }
+    }
+
+    if (storedApplications) {
+      try {
+        const parsed = JSON.parse(storedApplications);
+        const appData: Record<number, { appliedDate: Date }> = {};
+        parsed.forEach((app: any) => {
+          appData[app.id] = { appliedDate: new Date(app.appliedDate) };
+        });
+        setApplicationData(appData);
+      } catch (e) {
+        console.error("Error parsing applications:", e);
+      }
+    }
+  }, []);
+
+  // Save to localStorage whenever state changes
+  useEffect(() => {
+    localStorage.setItem("appliedPostings", JSON.stringify(appliedPostings));
+  }, [appliedPostings]);
+
+  useEffect(() => {
+    localStorage.setItem("starredPostings", JSON.stringify(starredPostings));
+    
+    // Also save starred postings data for the starred page
+    const starredData = mockPostings
+      .filter((p) => starredPostings.includes(p.id))
+      .map((posting) => ({
+        ...posting,
+        deadline: posting.deadline.toISOString(),
+      }));
+    localStorage.setItem("starredPostingsData", JSON.stringify(starredData));
+  }, [starredPostings]);
+
+  useEffect(() => {
+    const applicationsForStorage = mockPostings
+      .filter((p) => appliedPostings.includes(p.id))
+      .map((posting) => ({
+        ...posting,
+        appliedDate: (applicationData[posting.id]?.appliedDate || new Date()).toISOString(),
+        deadline: posting.deadline.toISOString(),
+      }));
+    localStorage.setItem("applications", JSON.stringify(applicationsForStorage));
+  }, [appliedPostings, applicationData]);
 
   const handleApply = (postingId: number) => {
-    setAppliedPostings([...appliedPostings, postingId]);
-    // In production, this would make an API call to Supabase
+    const posting = mockPostings.find((p) => p.id === postingId);
+    if (posting) {
+      setSelectedPostingForApplication(posting);
+      setShowApplicationModal(true);
+      // Reset form state
+      setResumeFile(null);
+      setQuestionAnswers({});
+    }
+  };
+
+  const handleSubmitApplication = () => {
+    if (!selectedPostingForApplication || !resumeFile) {
+      alert("Please attach your resume before submitting.");
+      return;
+    }
+
+    // Check if all questions are answered
+    const allQuestionsAnswered = selectedPostingForApplication.applicationQuestions?.every(
+      (question) => questionAnswers[question] && questionAnswers[question].trim() !== ""
+    );
+
+    if (!allQuestionsAnswered) {
+      alert("Please answer all application questions before submitting.");
+      return;
+    }
+
+    // Submit application
+    const postingId = selectedPostingForApplication.id;
+    const newApplied = [...appliedPostings, postingId];
+    setAppliedPostings(newApplied);
+    setApplicationData({
+      ...applicationData,
+      [postingId]: { appliedDate: new Date() },
+    });
+
+    // In production, this would upload the resume and submit answers to Supabase
+    console.log("Resume file:", resumeFile.name);
+    console.log("Question answers:", questionAnswers);
+
+    // Close modal and reset
+    setShowApplicationModal(false);
+    setSelectedPostingForApplication(null);
+    setResumeFile(null);
+    setQuestionAnswers({});
     alert("Application submitted successfully!");
   };
 
+  const handleCloseModal = () => {
+    setShowApplicationModal(false);
+    setSelectedPostingForApplication(null);
+    setResumeFile(null);
+    setQuestionAnswers({});
+  };
+
+  const handleStar = (postingId: number) => {
+    let newStarred;
+    if (starredPostings.includes(postingId)) {
+      newStarred = starredPostings.filter((id) => id !== postingId);
+    } else {
+      newStarred = [...starredPostings, postingId];
+    }
+    setStarredPostings(newStarred);
+    // In production, this would sync with Supabase
+  };
+
   const isApplied = (postingId: number) => appliedPostings.includes(postingId);
+  const isStarred = (postingId: number) => starredPostings.includes(postingId);
+
+  // Helper function to calculate deadline progress
+  const getDeadlineProgress = (deadline: Date) => {
+    const now = new Date();
+    const diffTime = deadline.getTime() - now.getTime();
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    const totalDays = 60; // Assuming typical application window is 60 days
+    const progress = Math.max(0, Math.min(100, ((totalDays - diffDays) / totalDays) * 100));
+    return { diffDays, progress };
+  };
+
+  // Get applied postings with deadlines for the dashboard display
+  const appliedWithDeadlines = mockPostings
+    .filter((posting) => isApplied(posting.id))
+    .map((posting) => ({
+      ...posting,
+      appliedDate: applicationData[posting.id]?.appliedDate || new Date(),
+    }))
+    .sort((a, b) => a.deadline.getTime() - b.deadline.getTime());
 
   // Get unique departments for filter dropdown
   const departments = Array.from(new Set(mockPostings.map((p) => p.department)));
@@ -85,37 +260,41 @@ export default function Dashboard() {
     return matchesSearch && matchesDepartment && matchesAvailability;
   });
   return (
-    <div className="flex min-h-screen bg-gradient-to-b from-zinc-50 to-white dark:from-black dark:to-zinc-950">
-      {/* Left Sidebar */}
-      <aside className="w-64 border-r border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
+    <div className="flex h-screen overflow-hidden bg-gradient-to-b from-zinc-50 to-white dark:from-black dark:to-zinc-950">
+      {/* Left Sidebar - Fixed */}
+      <aside className="fixed left-0 top-0 h-full w-52 border-r border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
         <div className="flex h-full flex-col">
           {/* Profile Section */}
-          <div className="border-b border-zinc-200 p-6 dark:border-zinc-800">
-            <div className="flex items-center gap-4">
-              <div className="relative h-16 w-16 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-700">
-                <div className="flex h-full w-full items-center justify-center text-2xl font-semibold text-zinc-500 dark:text-zinc-400">
-                  YN
+          <div className="border-b border-zinc-200 p-4 dark:border-zinc-800">
+            <div className="flex items-center gap-3">
+              <div className="relative h-12 w-12 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-700">
+                <div className="flex h-full w-full items-center justify-center text-lg font-semibold text-zinc-500 dark:text-zinc-400">
+                  {userProfile.name
+                    ? userProfile.name.split(" ").map((n) => n[0]).join("").toUpperCase().slice(0, 2)
+                    : userProfile.email
+                    ? userProfile.email[0].toUpperCase()
+                    : "?"}
                 </div>
               </div>
-              <div className="flex-1">
-                <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">
-                  Your Name
+              <div className="flex-1 min-w-0">
+                <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50 truncate">
+                  {userProfile.name || "Your Name"}
                 </h2>
-                <p className="text-sm text-zinc-600 dark:text-zinc-400">
-                  you@nd.edu
+                <p className="text-xs text-zinc-600 dark:text-zinc-400 truncate">
+                  {userProfile.email || "Email"}
                 </p>
               </div>
             </div>
           </div>
 
           {/* Navigation Links */}
-          <nav className="flex-1 space-y-1 p-4">
+          <nav className="flex-1 space-y-1 p-3">
             <Link
               href="/dashboard"
-              className="flex items-center gap-3 rounded-lg px-4 py-3 text-base font-medium text-cyan-700 bg-cyan-50 dark:bg-cyan-900/20 dark:text-cyan-400"
+              className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-cyan-700 bg-cyan-50 dark:bg-cyan-900/20 dark:text-cyan-400"
             >
               <svg
-                className="h-5 w-5"
+                className="h-4 w-4"
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24"
@@ -130,11 +309,11 @@ export default function Dashboard() {
               Dashboard
             </Link>
             <Link
-              href="/dashboard/opportunities"
-              className="flex items-center gap-3 rounded-lg px-4 py-3 text-base font-medium text-zinc-700 transition-colors hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
+              href="/dashboard/positions"
+              className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
             >
               <svg
-                className="h-5 w-5"
+                className="h-4 w-4"
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24"
@@ -146,14 +325,14 @@ export default function Dashboard() {
                   d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
                 />
               </svg>
-              Opportunities
+              Positions
             </Link>
             <Link
               href="/dashboard/applications"
-              className="flex items-center gap-3 rounded-lg px-4 py-3 text-base font-medium text-zinc-700 transition-colors hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
+              className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
             >
               <svg
-                className="h-5 w-5"
+                className="h-4 w-4"
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24"
@@ -168,11 +347,30 @@ export default function Dashboard() {
               Applications
             </Link>
             <Link
-              href="/dashboard/profile"
-              className="flex items-center gap-3 rounded-lg px-4 py-3 text-base font-medium text-zinc-700 transition-colors hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
+              href="/dashboard/starred"
+              className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
             >
               <svg
-                className="h-5 w-5"
+                className="h-4 w-4"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"
+                />
+              </svg>
+              Starred
+            </Link>
+            <Link
+              href="/dashboard/profile"
+              className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
+            >
+              <svg
+                className="h-4 w-4"
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24"
@@ -188,10 +386,10 @@ export default function Dashboard() {
             </Link>
             <Link
               href="/dashboard/settings"
-              className="flex items-center gap-3 rounded-lg px-4 py-3 text-base font-medium text-zinc-700 transition-colors hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
+              className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
             >
               <svg
-                className="h-5 w-5"
+                className="h-4 w-4"
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24"
@@ -214,13 +412,13 @@ export default function Dashboard() {
           </nav>
 
           {/* Bottom Section */}
-          <div className="border-t border-zinc-200 p-4 dark:border-zinc-800">
+          <div className="border-t border-zinc-200 p-3 dark:border-zinc-800">
             <Link
               href="/"
-              className="flex items-center gap-3 rounded-lg px-4 py-3 text-base font-medium text-zinc-700 transition-colors hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
+              className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
             >
               <svg
-                className="h-5 w-5"
+                className="h-4 w-4"
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24"
@@ -238,33 +436,32 @@ export default function Dashboard() {
         </div>
       </aside>
 
-      {/* Main Content */}
-      <main className="flex-1">
-        {/* Top Bar */}
-        <header className="border-b border-zinc-200 bg-white px-6 py-4 dark:border-zinc-800 dark:bg-zinc-900">
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-2xl font-bold text-zinc-900 dark:text-zinc-50">
-                Dashboard
-              </h1>
-              <p className="text-sm text-zinc-600 dark:text-zinc-400">
-                Welcome back!
-              </p>
+      {/* Top Header Bar - Fixed */}
+      <header className="fixed left-52 right-0 top-0 z-40 border-b border-zinc-200 bg-white px-8 py-6 dark:border-zinc-800 dark:bg-zinc-900">
+        <div className="flex items-center justify-between">
+          <h1 className="text-3xl font-bold text-zinc-900 dark:text-zinc-50">
+            Dashboard
+          </h1>
+          <Link href="/dashboard/profile" className="cursor-pointer">
+            <div className="relative h-10 w-10 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-700 transition-transform hover:scale-105">
+              {userProfile.name
+                ? userProfile.name.split(" ").map((n) => n[0]).join("").toUpperCase().slice(0, 2)
+                : userProfile.email
+                ? userProfile.email[0].toUpperCase()
+                : "?"}
             </div>
-            <div className="flex items-center gap-4">
-              <button className="rounded-lg border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-50 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700">
-                Notifications
-              </button>
-            </div>
-          </div>
-        </header>
+          </Link>
+        </div>
+      </header>
 
+      {/* Main Content */}
+      <main className="ml-52 mt-16 flex-1 overflow-y-auto">
         {/* Page Content */}
         <div className="p-6">
           <div className="mx-auto max-w-7xl">
             {/* Welcome Section */}
             <div className="mb-8 rounded-lg border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-900">
-              <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-50">
+              <h2 className="text-base font-semibold text-zinc-900 dark:text-zinc-50">
                 Welcome to Strove!
               </h2>
               <p className="mt-2 text-zinc-600 dark:text-zinc-400">
@@ -272,10 +469,72 @@ export default function Dashboard() {
               </p>
             </div>
 
+            {/* Upcoming Deadlines Section */}
+            {appliedWithDeadlines.length > 0 && (
+              <div className="mb-8 rounded-lg border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-900">
+                <h2 className="mb-4 text-base font-semibold text-zinc-900 dark:text-zinc-50">
+                  Upcoming Application Deadlines
+                </h2>
+                <div className="space-y-4">
+                  {appliedWithDeadlines.map((posting) => {
+                    const { diffDays, progress } = getDeadlineProgress(posting.deadline);
+                    const isOverdue = diffDays < 0;
+                    const isUrgent = diffDays >= 0 && diffDays <= 7;
+                    
+                    return (
+                      <div
+                        key={posting.id}
+                        className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800"
+                      >
+                        <div className="mb-2 flex items-center justify-between">
+                          <div>
+                            <h3 className="font-semibold text-zinc-900 dark:text-zinc-50">
+                              {posting.title}
+                            </h3>
+                            <p className="text-sm text-zinc-600 dark:text-zinc-400">
+                              {posting.professor} • {posting.department}
+                            </p>
+                          </div>
+                          <div className="text-right">
+                            <p className={`text-sm font-medium ${
+                              isOverdue
+                                ? "text-red-600 dark:text-red-400"
+                                : isUrgent
+                                ? "text-orange-600 dark:text-orange-400"
+                                : "text-zinc-600 dark:text-zinc-400"
+                            }`}>
+                              {isOverdue
+                                ? `Overdue by ${Math.abs(diffDays)} days`
+                                : `${diffDays} days left`}
+                            </p>
+                            <p className="text-xs text-zinc-500 dark:text-zinc-500">
+                              Deadline: {posting.deadline.toLocaleDateString()}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="h-2 w-full overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-700">
+                          <div
+                            className={`h-full transition-all ${
+                              isOverdue
+                                ? "bg-red-600 dark:bg-red-500"
+                                : isUrgent
+                                ? "bg-orange-600 dark:bg-orange-500"
+                                : "bg-cyan-600 dark:bg-cyan-500"
+                            }`}
+                            style={{ width: `${Math.max(0, Math.min(100, progress))}%` }}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             {/* Browse Opportunities Section */}
             <div>
               <div className="mb-6 flex items-center justify-between">
-                <h2 className="text-2xl font-bold text-zinc-900 dark:text-zinc-50">
+                <h2 className="text-xl font-bold text-zinc-900 dark:text-zinc-50">
                   Browse Opportunities
                 </h2>
                 <div className="text-sm text-zinc-600 dark:text-zinc-400">
@@ -431,7 +690,7 @@ export default function Dashboard() {
                     >
                       {/* Professor Info */}
                       <div className="mb-4">
-                        <h3 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">
+                        <h3 className="text-base font-semibold text-zinc-900 dark:text-zinc-50">
                           {posting.professor}
                         </h3>
                         <p className="text-sm text-zinc-600 dark:text-zinc-400">
@@ -481,24 +740,36 @@ export default function Dashboard() {
                         )}
                       </div>
 
-                      {/* Apply Button */}
-                      <button
-                        onClick={() => handleApply(posting.id)}
-                        disabled={isFull || hasApplied}
-                        className={`w-full rounded-lg px-4 py-2 text-sm font-semibold text-white transition-colors focus:outline-none focus:ring-2 focus:ring-cyan-700 focus:ring-offset-2 ${
-                          hasApplied
-                            ? "bg-green-600 hover:bg-green-700 dark:bg-green-700 dark:hover:bg-green-800"
+                      {/* Star and Apply Buttons */}
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => handleStar(posting.id)}
+                          className={`flex-1 rounded-lg px-4 py-2 text-sm font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-cyan-700 focus:ring-offset-2 ${
+                            isStarred(posting.id)
+                              ? "bg-yellow-500 text-white hover:bg-yellow-600 dark:bg-yellow-600 dark:hover:bg-yellow-700"
+                              : "border border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-50 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700"
+                          }`}
+                        >
+                          {isStarred(posting.id) ? "★ Starred" : "☆ Star"}
+                        </button>
+                        <button
+                          onClick={() => handleApply(posting.id)}
+                          disabled={isFull || hasApplied}
+                          className={`flex-1 rounded-lg px-4 py-2 text-sm font-semibold text-white transition-colors focus:outline-none focus:ring-2 focus:ring-cyan-700 focus:ring-offset-2 ${
+                            hasApplied
+                              ? "bg-green-600 hover:bg-green-700 dark:bg-green-700 dark:hover:bg-green-800"
+                              : isFull
+                              ? "cursor-not-allowed bg-zinc-400 dark:bg-zinc-600"
+                              : "bg-cyan-700 hover:bg-cyan-800 dark:bg-cyan-600 dark:hover:bg-cyan-700"
+                          }`}
+                        >
+                          {hasApplied
+                            ? "✓ Applied"
                             : isFull
-                            ? "cursor-not-allowed bg-zinc-400 dark:bg-zinc-600"
-                            : "bg-cyan-700 hover:bg-cyan-800 dark:bg-cyan-600 dark:hover:bg-cyan-700"
-                        }`}
-                      >
-                        {hasApplied
-                          ? "✓ Applied"
-                          : isFull
-                          ? "Full"
-                          : "Apply"}
-                      </button>
+                            ? "Full"
+                            : "Apply"}
+                        </button>
+                      </div>
                     </div>
                   );
                 })}
@@ -507,6 +778,150 @@ export default function Dashboard() {
           </div>
         </div>
       </main>
+
+      {/* Application Modal */}
+      {showApplicationModal && selectedPostingForApplication && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-2xl rounded-lg border border-zinc-200 bg-white shadow-xl dark:border-zinc-800 dark:bg-zinc-900">
+            {/* Modal Header */}
+            <div className="border-b border-zinc-200 p-6 dark:border-zinc-800">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-xl font-bold text-zinc-900 dark:text-zinc-50">
+                    Apply to {selectedPostingForApplication.title}
+                  </h2>
+                  <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+                    {selectedPostingForApplication.professor} • {selectedPostingForApplication.department}
+                  </p>
+                </div>
+                <button
+                  onClick={handleCloseModal}
+                  className="rounded-lg p-2 text-zinc-600 transition-colors hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800"
+                >
+                  <svg
+                    className="h-5 w-5"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M6 18L18 6M6 6l12 12"
+                    />
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            {/* Modal Content */}
+            <div className="max-h-[calc(100vh-200px)] overflow-y-auto p-6">
+              <div className="space-y-6">
+                {/* Resume Upload */}
+                <div>
+                  <label className="mb-2 block text-sm font-medium text-zinc-900 dark:text-zinc-50">
+                    Resume <span className="text-red-500">*</span>
+                  </label>
+                  <div className="mt-2">
+                    <label className="flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed border-zinc-300 bg-zinc-50 p-6 transition-colors hover:border-cyan-500 hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-800 dark:hover:border-cyan-500">
+                      <div className="flex flex-col items-center justify-center">
+                        <svg
+                          className="mb-2 h-8 w-8 text-zinc-500 dark:text-zinc-400"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
+                          />
+                        </svg>
+                        <p className="text-sm text-zinc-600 dark:text-zinc-400">
+                          {resumeFile ? (
+                            <span className="font-medium text-cyan-700 dark:text-cyan-400">{resumeFile.name}</span>
+                          ) : (
+                            <>
+                              <span className="font-medium text-cyan-700 dark:text-cyan-400">Click to upload</span> or drag and drop
+                            </>
+                          )}
+                        </p>
+                        <p className="text-xs text-zinc-500 dark:text-zinc-500">PDF, DOC, DOCX (MAX. 5MB)</p>
+                      </div>
+                      <input
+                        type="file"
+                        accept=".pdf,.doc,.docx"
+                        className="hidden"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) {
+                            if (file.size > 5 * 1024 * 1024) {
+                              alert("File size must be less than 5MB");
+                              return;
+                            }
+                            setResumeFile(file);
+                          }
+                        }}
+                      />
+                    </label>
+                  </div>
+                </div>
+
+                {/* Application Questions */}
+                {selectedPostingForApplication.applicationQuestions && selectedPostingForApplication.applicationQuestions.length > 0 && (
+                  <div>
+                    <h3 className="mb-4 text-base font-semibold text-zinc-900 dark:text-zinc-50">
+                      Application Questions
+                    </h3>
+                    <div className="space-y-4">
+                      {selectedPostingForApplication.applicationQuestions.map((question, index) => (
+                        <div key={index}>
+                          <label className="mb-2 block text-sm font-medium text-zinc-900 dark:text-zinc-50">
+                            {question} <span className="text-red-500">*</span>
+                          </label>
+                          <textarea
+                            rows={4}
+                            value={questionAnswers[question] || ""}
+                            onChange={(e) =>
+                              setQuestionAnswers({
+                                ...questionAnswers,
+                                [question]: e.target.value,
+                              })
+                            }
+                            className="w-full rounded-lg border border-zinc-300 bg-white px-4 py-2 text-sm text-zinc-900 placeholder-zinc-500 transition-colors focus:border-cyan-700 focus:outline-none focus:ring-2 focus:ring-cyan-700 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-50 dark:placeholder-zinc-400 dark:focus:border-cyan-500 dark:focus:ring-cyan-500"
+                            placeholder="Your answer..."
+                            required
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="border-t border-zinc-200 p-6 dark:border-zinc-800">
+              <div className="flex justify-end gap-3">
+                <button
+                  onClick={handleCloseModal}
+                  className="rounded-lg border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-50 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSubmitApplication}
+                  className="rounded-lg bg-cyan-700 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-cyan-800 dark:bg-cyan-600 dark:hover:bg-cyan-700"
+                >
+                  Submit Application
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
