@@ -403,7 +403,7 @@ export default function Positions() {
       </header>
 
       {/* Main Content - Split Panel Layout */}
-      <main className="ml-52 mt-16 flex flex-1 overflow-hidden">
+      <main className="ml-52 mt-24 flex flex-1 overflow-hidden">
         {/* Left Panel - Scrollable Position List */}
         <div className="flex h-full w-1/3 flex-col border-r border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
           <div className="border-b border-zinc-200 p-4 dark:border-zinc-800">

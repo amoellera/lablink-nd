@@ -56,20 +56,70 @@ export default function SignUp() {
 
     // Sign up with Supabase
     try {
+      // Attempt to sign up - Supabase will automatically prevent duplicate emails
       const { data, error: signUpError } = await supabase.auth.signUp({
         email,
         password,
         options: {
           data: {
-            name: name,
+            name: name.trim(), // Trim whitespace
           },
         },
       });
 
       if (signUpError) {
-        setError(signUpError.message || "Something went wrong. Please try again.");
+        // Check if error is due to user already existing
+        if (signUpError.message.includes("already registered") || 
+            signUpError.message.includes("already exists") ||
+            signUpError.message.includes("User already registered")) {
+          setError("An account with this email already exists. Please sign in instead.");
+        } else {
+          setError(signUpError.message || "Something went wrong. Please try again.");
+        }
         setIsSubmitting(false);
         return;
+      }
+
+      if (!data.user) {
+        setError("Failed to create account. Please try again.");
+        setIsSubmitting(false);
+        return;
+      }
+
+      // Wait a moment for the session to be established
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      // Verify the user data was saved
+      const { data: { user: currentUser } } = await supabase.auth.getUser();
+      if (currentUser && !currentUser.user_metadata?.name) {
+        // If name wasn't saved, try updating it directly
+        await supabase.auth.updateUser({
+          data: {
+            name: name.trim(),
+          },
+        });
+      }
+
+      // Create profile record in profiles table (if it doesn't exist from trigger)
+      if (currentUser) {
+        const { error: profileError } = await supabase
+          .from('profiles')
+          .upsert({
+            id: currentUser.id,
+            email: currentUser.email || '',
+            name: name.trim(),
+            bio: '',
+            major: '',
+            year: '',
+          }, {
+            onConflict: 'id'
+          });
+
+        // If table doesn't exist yet, that's okay - we'll create it later
+        // The trigger should handle profile creation, but upsert ensures it exists
+        if (profileError && !profileError.message.includes("does not exist")) {
+          // Only log unexpected errors, not "table doesn't exist" errors
+        }
       }
 
       // Redirect to onboarding page

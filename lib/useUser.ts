@@ -51,7 +51,9 @@ export function useUser() {
       setLoading(false);
     });
 
-    return () => subscription.unsubscribe();
+    return () => {
+      subscription?.unsubscribe();
+    };
   }, []);
 
   return { user, userProfile, loading };

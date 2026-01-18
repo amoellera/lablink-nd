@@ -278,7 +278,7 @@ export default function Starred() {
       </header>
 
       {/* Main Content */}
-      <main className="ml-52 mt-16 flex-1 overflow-y-auto">
+      <main className="ml-52 mt-24 flex-1 overflow-y-auto">
         {/* Page Content */}
         <div className="p-6">
           <div className="mx-auto max-w-7xl">

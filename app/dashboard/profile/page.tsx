@@ -117,17 +117,95 @@ export default function Profile() {
     major: "",
     year: "",
     profileImage: null as string | null,
+    gpa: null as string | null,
+    workExperience: [] as any[],
   });
   const [isEditing, setIsEditing] = useState(false);
   const [editedName, setEditedName] = useState("");
   const [editedBio, setEditedBio] = useState("");
   const [editedMajor, setEditedMajor] = useState("");
   const [editedYear, setEditedYear] = useState("");
-  const [followedUsers, setFollowedUsers] = useState<Set<number>>(new Set());
-  const [followerCount, setFollowerCount] = useState(mockUserProfile.followers);
+  const [editedGpa, setEditedGpa] = useState("");
+  const [editedWorkExperience, setEditedWorkExperience] = useState<any[]>([]);
+  const [followedUsers, setFollowedUsers] = useState<Set<string>>(new Set());
+  const [followerCount, setFollowerCount] = useState(0);
+  const [followingCount, setFollowingCount] = useState(0);
+
+  // Load profile data including GPA and work experience from Supabase
+  useEffect(() => {
+    const loadProfileData = async () => {
+      if (!user?.id) return;
+
+      try {
+        // Load full profile from profiles table
+        const { data: profileData } = await supabase
+          .from('profiles')
+          .select('gpa, work_experience')
+          .eq('id', user.id)
+          .single();
+
+        if (profileData) {
+          // Handle work_experience which might be JSON string or JSONB object
+          let workExp: any[] = [];
+          if (profileData.work_experience) {
+            try {
+              workExp = typeof profileData.work_experience === 'string' 
+                ? JSON.parse(profileData.work_experience) 
+                : profileData.work_experience;
+              if (!Array.isArray(workExp)) {
+                workExp = [];
+              }
+            } catch (e) {
+              workExp = [];
+            }
+          }
+          
+          setUserProfile(prev => ({
+            ...prev,
+            gpa: profileData.gpa || null,
+            workExperience: workExp,
+          }));
+          setEditedGpa(profileData.gpa || '');
+          setEditedWorkExperience(workExp);
+        }
+
+        // Get followers count (users following current user)
+        const { count: followersCount } = await supabase
+          .from('followers')
+          .select('*', { count: 'exact', head: true })
+          .eq('following_id', user.id);
+
+        // Get following count (users current user is following)
+        const { count: followingCount } = await supabase
+          .from('followers')
+          .select('*', { count: 'exact', head: true })
+          .eq('follower_id', user.id);
+
+        // Get list of users current user is following
+        const { data: followingData } = await supabase
+          .from('followers')
+          .select('following_id')
+          .eq('follower_id', user.id);
+
+        setFollowerCount(followersCount || 0);
+        setFollowingCount(followingCount || 0);
+        if (followingData) {
+          setFollowedUsers(new Set(followingData.map(f => f.following_id)));
+        }
+      } catch (error) {
+        // If tables don't exist yet, use defaults
+        console.error("Error loading profile data:", error);
+      }
+    };
+
+    loadProfileData();
+  }, [user]);
 
   useEffect(() => {
-    setUserProfile(initialUserProfile);
+    setUserProfile(prev => ({
+      ...prev,
+      ...initialUserProfile,
+    }));
     setEditedName(initialUserProfile.name);
     setEditedBio(initialUserProfile.bio);
     setEditedMajor(initialUserProfile.major);
@@ -138,7 +216,7 @@ export default function Profile() {
     if (!user) return;
 
     // Update user metadata in Supabase
-    const { error } = await supabase.auth.updateUser({
+    const { error: metadataError } = await supabase.auth.updateUser({
       data: {
         name: editedName,
         bio: editedBio,
@@ -147,8 +225,30 @@ export default function Profile() {
       },
     });
 
-    if (error) {
-      alert("Error updating profile: " + error.message);
+    if (metadataError) {
+      alert("Error updating profile: " + metadataError.message);
+      return;
+    }
+
+    // Update profile in profiles table
+    const { error: profileError } = await supabase
+      .from('profiles')
+      .upsert({
+        id: user.id,
+        email: user.email || '',
+        name: editedName,
+        bio: editedBio,
+        major: editedMajor,
+        year: editedYear,
+        gpa: editedGpa || null,
+        work_experience: editedWorkExperience.length > 0 ? editedWorkExperience : null,
+        updated_at: new Date().toISOString(),
+      }, {
+        onConflict: 'id'
+      });
+
+    if (profileError && !profileError.message.includes("does not exist")) {
+      alert("Error updating profile: " + profileError.message);
       return;
     }
 
@@ -158,25 +258,58 @@ export default function Profile() {
       bio: editedBio,
       major: editedMajor,
       year: editedYear,
+      gpa: editedGpa || null,
+      workExperience: editedWorkExperience,
     });
     setIsEditing(false);
     alert("Profile updated successfully!");
   };
 
-  const handleFollow = (userId: number) => {
-    const newFollowedUsers = new Set(followedUsers);
-    if (newFollowedUsers.has(userId)) {
-      newFollowedUsers.delete(userId);
-      setFollowerCount((prev) => Math.max(0, prev - 1)); // Decrement if unfollowing
+  const handleFollow = async (userId: string) => {
+    if (!user?.id) return;
+
+    const isCurrentlyFollowing = followedUsers.has(userId);
+    let success = false;
+
+    if (isCurrentlyFollowing) {
+      // Unfollow: delete the follow relationship
+      const { error } = await supabase
+        .from('followers')
+        .delete()
+        .eq('follower_id', user.id)
+        .eq('following_id', userId);
+
+      if (!error) {
+        const newFollowedUsers = new Set(followedUsers);
+        newFollowedUsers.delete(userId);
+        setFollowedUsers(newFollowedUsers);
+        setFollowingCount(prev => Math.max(0, prev - 1));
+        success = true;
+      }
     } else {
-      newFollowedUsers.add(userId);
-      setFollowerCount((prev) => prev + 1); // Increment if following
+      // Follow: create the follow relationship
+      const { error } = await supabase
+        .from('followers')
+        .insert({
+          follower_id: user.id,
+          following_id: userId,
+        });
+
+      if (!error) {
+        const newFollowedUsers = new Set(followedUsers);
+        newFollowedUsers.add(userId);
+        setFollowedUsers(newFollowedUsers);
+        setFollowingCount(prev => prev + 1);
+        success = true;
+      }
     }
-    setFollowedUsers(newFollowedUsers);
-    // In production, this would update in Supabase
+
+    if (!success) {
+      alert("Error updating follow status. Please try again.");
+    }
   };
 
-  const isFollowing = (userId: number) => followedUsers.has(userId);
+  const isFollowing = (userId: string) => followedUsers.has(userId);
 
   return (
     <div className="flex h-screen overflow-hidden bg-gradient-to-b from-zinc-50 to-white dark:from-black dark:to-zinc-950">
@@ -392,7 +525,7 @@ export default function Profile() {
       </header>
 
       {/* Main Content - Three Column Layout */}
-      <main className="ml-52 mt-16 flex flex-1 overflow-y-auto">
+      <main className="ml-52 mt-24 flex flex-1 overflow-y-auto">
         {/* Left Column - Profile Info */}
         <div className="w-56 border-r border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
           <div className="mb-4">
@@ -457,6 +590,8 @@ export default function Profile() {
                       setEditedBio(userProfile.bio);
                       setEditedMajor(userProfile.major);
                       setEditedYear(userProfile.year);
+                      setEditedGpa(userProfile.gpa || '');
+                      setEditedWorkExperience(userProfile.workExperience || []);
                     }}
                     className="flex-1 rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 transition-colors hover:bg-zinc-50 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700"
                   >
@@ -509,7 +644,7 @@ export default function Profile() {
               </div>
               <div className="text-center">
                 <p className="text-xl font-bold text-zinc-900 dark:text-zinc-50">
-                  {mockUserProfile.following}
+                  {followingCount}
                 </p>
                 <p className="text-xs text-zinc-600 dark:text-zinc-400">Following</p>
               </div>
@@ -518,10 +653,25 @@ export default function Profile() {
 
           {/* GPA */}
           <div className="rounded-lg border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-900">
-            <p className="mb-1 text-xs font-medium text-zinc-500 dark:text-zinc-400">GPA</p>
-            <p className="text-xl font-bold text-zinc-900 dark:text-zinc-50">
-              {mockUserProfile.gpa.toFixed(2)}
-            </p>
+            {isEditing ? (
+              <>
+                <p className="mb-1 text-xs font-medium text-zinc-500 dark:text-zinc-400">GPA</p>
+                <input
+                  type="text"
+                  value={editedGpa}
+                  onChange={(e) => setEditedGpa(e.target.value)}
+                  placeholder="3.85"
+                  className="w-full rounded-lg border border-zinc-300 bg-white px-2 py-1 text-center text-base font-bold text-zinc-900 placeholder-zinc-500 focus:border-cyan-700 focus:outline-none focus:ring-2 focus:ring-cyan-700 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-50 dark:placeholder-zinc-400 dark:focus:border-cyan-500 dark:focus:ring-cyan-500"
+                />
+              </>
+            ) : (
+              <>
+                <p className="mb-1 text-xs font-medium text-zinc-500 dark:text-zinc-400">GPA</p>
+                <p className="text-xl font-bold text-zinc-900 dark:text-zinc-50">
+                  {userProfile.gpa || 'N/A'}
+                </p>
+              </>
+            )}
           </div>
         </div>
 
@@ -610,28 +760,109 @@ export default function Profile() {
 
             {/* Work Experience Section */}
             <div className="rounded-lg border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-900">
-              <h2 className="mb-3 text-xl font-semibold text-zinc-900 dark:text-zinc-50">
-                Work Experience
-              </h2>
-              {mockUserProfile.workExperience.map((work, index) => (
-                <div
-                  key={index}
-                  className={index !== mockUserProfile.workExperience.length - 1 ? "mb-5 pb-5 border-b border-zinc-200 dark:border-zinc-800" : "mb-3"}
-                >
-                  <h3 className="text-base font-semibold text-zinc-900 dark:text-zinc-50">
-                    {work.title}
-                  </h3>
-                  <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
-                    {work.company} • {work.location}
-                  </p>
-                  <p className="mb-2 text-xs text-zinc-500 dark:text-zinc-500">
-                    {work.startDate} - {work.endDate}
-                  </p>
-                  <p className="text-xs text-zinc-600 dark:text-zinc-400">
-                    {work.description}
-                  </p>
+              <div className="mb-3 flex items-center justify-between">
+                <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-50">
+                  Work Experience
+                </h2>
+                {!isEditing && (
+                  <button
+                    onClick={() => setIsEditing(true)}
+                    className="text-xs text-cyan-700 hover:text-cyan-800 dark:text-cyan-400 dark:hover:text-cyan-300"
+                  >
+                    Edit
+                  </button>
+                )}
+              </div>
+              {isEditing ? (
+                <div className="space-y-4">
+                  {editedWorkExperience.map((work, index) => (
+                    <div key={index} className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
+                      <input
+                        type="text"
+                        value={work.title || ''}
+                        onChange={(e) => {
+                          const updated = [...editedWorkExperience];
+                          updated[index] = { ...updated[index], title: e.target.value };
+                          setEditedWorkExperience(updated);
+                        }}
+                        placeholder="Job Title"
+                        className="mb-2 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 placeholder-zinc-500 focus:border-cyan-700 focus:outline-none focus:ring-2 focus:ring-cyan-700 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-50 dark:placeholder-zinc-400 dark:focus:border-cyan-500 dark:focus:ring-cyan-500"
+                      />
+                      <input
+                        type="text"
+                        value={work.company || ''}
+                        onChange={(e) => {
+                          const updated = [...editedWorkExperience];
+                          updated[index] = { ...updated[index], company: e.target.value };
+                          setEditedWorkExperience(updated);
+                        }}
+                        placeholder="Company"
+                        className="mb-2 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 placeholder-zinc-500 focus:border-cyan-700 focus:outline-none focus:ring-2 focus:ring-cyan-700 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-50 dark:placeholder-zinc-400 dark:focus:border-cyan-500 dark:focus:ring-cyan-500"
+                      />
+                      <textarea
+                        value={work.description || ''}
+                        onChange={(e) => {
+                          const updated = [...editedWorkExperience];
+                          updated[index] = { ...updated[index], description: e.target.value };
+                          setEditedWorkExperience(updated);
+                        }}
+                        placeholder="Description"
+                        rows={3}
+                        className="mb-2 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 placeholder-zinc-500 focus:border-cyan-700 focus:outline-none focus:ring-2 focus:ring-cyan-700 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-50 dark:placeholder-zinc-400 dark:focus:border-cyan-500 dark:focus:ring-cyan-500"
+                      />
+                      <button
+                        onClick={() => {
+                          setEditedWorkExperience(editedWorkExperience.filter((_, i) => i !== index));
+                        }}
+                        className="text-xs text-red-600 hover:text-red-700 dark:text-red-400"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+                  <button
+                    onClick={() => {
+                      setEditedWorkExperience([...editedWorkExperience, { title: '', company: '', description: '' }]);
+                    }}
+                    className="w-full rounded-lg border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-50 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700"
+                  >
+                    + Add Work Experience
+                  </button>
                 </div>
-              ))}
+              ) : (
+                <>
+                  {userProfile.workExperience && userProfile.workExperience.length > 0 ? (
+                    userProfile.workExperience.map((work, index) => (
+                      <div
+                        key={index}
+                        className={index !== userProfile.workExperience.length - 1 ? "mb-5 pb-5 border-b border-zinc-200 dark:border-zinc-800" : "mb-3"}
+                      >
+                        <h3 className="text-base font-semibold text-zinc-900 dark:text-zinc-50">
+                          {work.title || 'Untitled Position'}
+                        </h3>
+                        <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+                          {work.company || 'Unknown Company'}
+                          {work.location && ` • ${work.location}`}
+                        </p>
+                        {(work.startDate || work.endDate) && (
+                          <p className="mb-2 text-xs text-zinc-500 dark:text-zinc-500">
+                            {work.startDate || ''} - {work.endDate || 'Present'}
+                          </p>
+                        )}
+                        {work.description && (
+                          <p className="text-xs text-zinc-600 dark:text-zinc-400">
+                            {work.description}
+                          </p>
+                        )}
+                      </div>
+                    ))
+                  ) : (
+                    <p className="text-sm italic text-zinc-400 dark:text-zinc-500">
+                      No work experience yet. Click "Edit" to add your work experience.
+                    </p>
+                  )}
+                </>
+              )}
             </div>
 
             {/* Courses Section */}
@@ -705,14 +936,14 @@ export default function Profile() {
                   {person.mutualConnections} mutual{person.mutualConnections !== 1 ? "s" : ""}
                 </p>
                 <button
-                  onClick={() => handleFollow(person.id)}
+                  onClick={() => handleFollow(person.id.toString())}
                   className={`w-full rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
-                    isFollowing(person.id)
+                    isFollowing(person.id.toString())
                       ? "bg-zinc-200 text-zinc-700 hover:bg-zinc-300 dark:bg-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-600"
                       : "bg-cyan-700 text-white hover:bg-cyan-800 dark:bg-cyan-600 dark:hover:bg-cyan-700"
                   }`}
                 >
-                  {isFollowing(person.id) ? "Following" : "Follow"}
+                  {isFollowing(person.id.toString()) ? "Following" : "Follow"}
                 </button>
               </div>
             ))}
